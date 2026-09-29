@@ -5,7 +5,7 @@ image:
   # -- 镜像仓库地址 (ECR, 集群有 pull 权限)
   repository: 602499751343.dkr.ecr.eu-west-3.amazonaws.com/dfm/dev/dfmweb
   # -- 镜像 tag(覆盖文件请填具体版本)
-  tag: latest
+  tag: 12-c3a82ee9
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
