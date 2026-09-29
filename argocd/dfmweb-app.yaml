@@ -8,7 +8,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: ssh://git@10.4.3.107:10022/stellantis-overseas-tsp/dfmweb.git
+    repoURL: https://github.com/zxc-dev/dfmweb-gitops.git
     targetRevision: k8s_sit_test
     path: charts/dfmweb
     helm:
