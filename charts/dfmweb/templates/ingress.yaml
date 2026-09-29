@@ -1,8 +1,9 @@
 {{- if .Values.ingress.enabled -}}
+{{- $fullName := include "dfmweb.fullname" . -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "dfmweb.fullname" . }}
+  name: {{ $fullName }}
   labels:
     {{- include "dfmweb.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
@@ -13,13 +14,12 @@ spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}
   {{- end }}
-  {{- with .Values.ingress.tls }}
-  tls:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
+  {{- /* AWS Load Balancer Controller: TLS 由 alb.ingress.kubernetes.io/certificate-arn 注解提供,无需 spec.tls */}}
   rules:
     {{- range .Values.ingress.hosts }}
-    - host: {{ .host | quote }}
+    - {{- if .host }}
+      host: {{ .host | quote }}
+      {{- end }}
       http:
         paths:
           {{- range .paths }}
@@ -27,7 +27,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "dfmweb.fullname" $ }}
+                name: {{ $fullName }}
                 port:
                   number: {{ $.Values.service.port }}
           {{- end }}
