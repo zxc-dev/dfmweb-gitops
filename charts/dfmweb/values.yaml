@@ -51,12 +51,8 @@ ingress:
     alb.ingress.kubernetes.io/scheme: internet-facing
     # -- IP 模式直连 Pod;若用 NodePort 则改为 instance
     alb.ingress.kubernetes.io/target-type: ip
-    # -- 监听端口(HTTPS 443,HTTP 80 由 ssl-redirect 转发)
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
-    # -- 将 ACM 证书 ARN 改为实际值(可在 eu-west-3 区域 ACM 控制台查询)
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-west-3:602499751343:certificate/REPLACE-ME
-    # -- 把 HTTP 308 重定向到 HTTPS
-    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    # -- 临时只监听 HTTP 80,等 ACM 证书 ARN 拿到后再切 HTTPS 443
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     # -- 健康检查
     alb.ingress.kubernetes.io/healthcheck-path: /
     alb.ingress.kubernetes.io/healthcheck-port: traffic-port
