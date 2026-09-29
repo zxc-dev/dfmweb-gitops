@@ -1,0 +1,16 @@
+1. 应用 {{ include "dfmweb.fullname" . }} 已部署。
+2. 容器端口: 8080 (HTTP)
+3. 访问方式:
+   - 集群内: http://{{ include "dfmweb.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+   {{- if .Values.ingress.enabled }}
+   {{- range .Values.ingress.hosts }}
+   - 集群外: http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}{{ (index .paths 0).path }}
+   {{- end }}
+   {{- end }}
+4. 后端反代地址: http://{{ .Values.backend.host }}:{{ .Values.backend.port }}{{ .Values.backend.path }}
+5. 自定义部署:
+   helm upgrade --install {{ .Release.Name }} . \
+     --namespace {{ .Release.Namespace }} \
+     --set image.tag=<TAG> \
+     --set backend.host=<your-backend> \
+     --set env.TREV={{ .Values.env.TREV }}

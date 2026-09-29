@@ -1,0 +1,14 @@
+apiVersion: v2
+name: dfmweb
+description: dfmweb 前端（UmiJS + React）通过 nginx 静态托管 + /api 反代
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - frontend
+  - umi
+  - react
+  - nginx
+maintainers:
+  - name: stellantis-overseas-tsp
+kubeVersion: ">=1.22.0-0"

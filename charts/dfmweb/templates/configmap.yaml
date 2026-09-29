@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfmweb.fullname" . }}-nginx-config
+  labels:
+    {{- include "dfmweb.labels" . | nindent 4 }}
+data:
+  nginx.conf: |
+    worker_processes  1;
+
+    events {
+        worker_connections  1024;
+    }
+
+    http {
+        server_tokens off;
+        include       mime.types;
+        default_type  application/octet-stream;
+
+        log_format proxy_pass_log '$request_uri - $proxy_host:$proxy_port $http_x_forwarded_for '
+                    '[language] - $http_x_dfiov_i18n_language'
+                    '[signature] - $http_x_dfiov_signature'
+                    '[timestamp] - $http_x_dfiov_timestamp';
+
+        access_log  /var/log/nginx/access.log;
+
+        sendfile        on;
+        keepalive_timeout  65;
+
+        gzip on;
+        gzip_buffers 32 4k;
+        gzip_comp_level 6;
+        gzip_min_length 200;
+        gzip_types text/css text/xml application/javascript;
+        gzip_vary on;
+
+        proxy_intercept_errors on;
+        client_max_body_size 5m;
+
+        server {
+            listen       8080;
+            server_name  localhost;
+
+            client_max_body_size 5m;
+            client_body_buffer_size 5M;
+            client_body_in_file_only clean;
+            client_body_timeout 300s;
+
+            location / {
+                root   /data/dist;
+                index  index.html;
+                client_max_body_size 5m;
+                try_files $uri $uri/ /index.html;
+            }
+
+            location /api/ {
+                proxy_request_buffering off;
+                proxy_buffering off;
+                proxy_read_timeout 300s;
+                proxy_set_header X-Dfiov-I18n-Language $http_x_dfiov_i18n_language;
+                proxy_set_header X-Dfiov-Signature $http_x_dfiov_signature;
+                proxy_set_header X-Dfiov-Timestamp $http_x_dfiov_timestamp;
+
+                proxy_pass http://{{ .Values.backend.host }}:{{ .Values.backend.port }}{{ .Values.backend.path }};
+                access_log /var/log/nginx/api_access.log proxy_pass_log;
+                client_max_body_size 5m;
+            }
+        }
+    }

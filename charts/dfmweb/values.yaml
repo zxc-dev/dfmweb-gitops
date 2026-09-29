@@ -1,0 +1,95 @@
+# -- 副本数
+replicaCount: 2
+
+image:
+  # -- 镜像仓库地址 (ECR, 集群有 pull 权限)
+  repository: 602499751343.dkr.ecr.eu-west-3.amazonaws.com/dfm/dev/dfmweb
+  # -- 镜像 tag(覆盖文件请填具体版本)
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# -- 启动时注入到 Pod 的环境变量
+env:
+  # -- 用于 sed 替换 nginx.conf 中 ENV 占位符的版本/构建标识
+  TREV: "dev"
+
+# -- 业务后端(Spring Cloud Gateway in-cluster DNS)
+backend:
+  # -- 业务网关 service.namespace.svc.cluster.local
+  host: optgateway.base.svc.cluster.local
+  # -- 业务网关端口
+  port: 8080
+  # -- 反代前缀(/api/ -> http://host:port/dfmadmin/)
+  path: /dfmadmin/
+
+serviceAccount:
+  # -- 是否创建 ServiceAccount
+  create: true
+  # -- ServiceAccount annotations
+  annotations: {}
+  # -- 自定义名称(留空则使用默认生成)
+  name: ""
+
+service:
+  type: ClusterIP
+  # -- Service 暴露端口
+  port: 80
+  # -- 容器端口名(对应 deployment.yaml 中 ports.name)
+  targetPortName: http
+
+ingress:
+  # -- 是否创建 Ingress
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 5m
+  hosts:
+    - host: dfmweb.example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# -- 探针(probe)配置
+probes:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 3
+  readiness:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+  startup:
+    enabled: true
+    failureThreshold: 30
+    periodSeconds: 5
+
+# -- HPA(可选)
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+# -- Pod-level 注解/容忍/拓扑(可选)
+podAnnotations: {}
+tolerations: []
+nodeSelector: {}
+affinity: {}
+
+# -- 资源配额/限额
+podSecurityContext: {}
+securityContext: {}
