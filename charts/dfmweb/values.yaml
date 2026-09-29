@@ -39,17 +39,42 @@ service:
   # -- 容器端口名(对应 deployment.yaml 中 ports.name)
   targetPortName: http
 
+# -- Ingress 配置 (AWS ALB,由 AWS Load Balancer Controller 接管)
 ingress:
   # -- 是否创建 Ingress
-  enabled: false
-  className: nginx
+  enabled: true
+  # -- ingressClassName: 由 AWS Load Balancer Controller 提供的 "alb"
+  className: alb
+  # -- ALB 注解(参考 https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.6/guide/ingress/annotations/)
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: 5m
+    # -- 公网入口(internet-facing) / 内网改为 internal
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # -- IP 模式直连 Pod;若用 NodePort 则改为 instance
+    alb.ingress.kubernetes.io/target-type: ip
+    # -- 监听端口(HTTPS 443,HTTP 80 由 ssl-redirect 转发)
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    # -- 将 ACM 证书 ARN 改为实际值(可在 eu-west-3 区域 ACM 控制台查询)
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-west-3:602499751343:certificate/REPLACE-ME
+    # -- 把 HTTP 308 重定向到 HTTPS
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    # -- 健康检查
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
+    alb.ingress.kubernetes.io/success-codes: "200-399"
+    # -- 外部 DNS(可选,Route53 自动注册)
+    external-dns.alpha.kubernetes.io/hostname: tspweb.dfm-dev.stellantis.cloud
+  # -- 路由规则(host 留空可做 ALB 默认 catch-all)
   hosts:
-    - host: dfmweb.example.local
+    - host: tspweb.dfm-dev.stellantis.cloud
       paths:
         - path: /
           pathType: Prefix
+  # -- ALB 不使用 spec.tls;TLS 由 alb.ingress.kubernetes.io/certificate-arn 注解提供
   tls: []
 
 resources:
