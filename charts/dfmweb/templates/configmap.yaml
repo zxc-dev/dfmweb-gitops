@@ -37,6 +37,11 @@ data:
         proxy_intercept_errors on;
         client_max_body_size 5m;
 
+        # 用变量 + resolver 让 nginx 启动时不立即解析 upstream,
+        # 等请求时再解析,避免后端 Service 暂未就绪导致 nginx CrashLoop
+        resolver 10.100.0.10 10.100.0.20 valid=30s ipv6=off;
+        resolver_timeout 10s;
+
         server {
             listen       8080;
             server_name  localhost;
@@ -61,7 +66,10 @@ data:
                 proxy_set_header X-Dfiov-Signature $http_x_dfiov_signature;
                 proxy_set_header X-Dfiov-Timestamp $http_x_dfiov_timestamp;
 
-                proxy_pass http://{{ .Values.backend.host }}:{{ .Values.backend.port }}{{ .Values.backend.path }};
+                # 使用变量 + resolver 让 nginx 在请求时才解析 upstream,
+                # 避免后端 Service(optgateway.base.svc.cluster.local)暂未就绪时 nginx CrashLoopBackOff
+                set $backend_upstream http://{{ .Values.backend.host }}:{{ .Values.backend.port }}{{ .Values.backend.path }};
+                proxy_pass $backend_upstream;
                 access_log /var/log/nginx/api_access.log proxy_pass_log;
                 client_max_body_size 5m;
             }
