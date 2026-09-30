@@ -1,0 +1,101 @@
+# -- 副本数
+replicaCount: 1
+
+image:
+  # -- 镜像仓库地址 (ECR, 集群有 pull 权限)
+  repository: 602499751343.dkr.ecr.eu-west-3.amazonaws.com/dfm/dev/msrcs
+  # -- 镜像 tag(覆盖文件请填具体版本,ECR 中 latest 可能不存在)
+  tag: 1-bcd37ad
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# -- 启动时注入到 Pod 的环境变量
+env:
+  # -- Spring 激活的 profile(原 Marathon 部署为 sit)
+  SPRING_PROFILES_ACTIVE: "sit"
+  # -- JVM 参数（沿用原 marathon.json 配置）
+  JAVA_OPTS: "-XX:+UseG1GC -Xss256k -XX:G1ConcRefinementThreads=2 -XX:CICompilerCount=4 -XX:ParallelGCThreads=4"
+  # -- 时区
+  TZ: "Asia/Shanghai"
+
+serviceAccount:
+  # -- 是否创建 ServiceAccount
+  create: true
+  # -- ServiceAccount annotations
+  annotations: {}
+  # -- 自定义名称(留空则使用默认生成)
+  name: ""
+
+# -- Service 配置: 通过 AWS Load Balancer Controller 创建 NLB
+service:
+  # -- LoadBalancer(NLB) / ClusterIP
+  type: LoadBalancer
+  # -- Service 暴露端口
+  port: 80
+  # -- 容器端口名(对应 deployment.yaml 中 ports.name)
+  targetPortName: http
+  # -- 容器端口（Spring Boot 默认 8080）
+  containerPort: 8080
+  # -- NLB 注解(AWS Load Balancer Controller external 模式)
+  annotations:
+    # -- 负载均衡类型(NLB)
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    # -- IP 模式直连 Pod
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+    # -- 公网入口 / 内网改为 internal
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+
+# -- Ingress 已弃用(改用 Service type=LoadBalancer 的 NLB)
+ingress:
+  enabled: false
+  className: alb
+  annotations: {}
+  hosts: []
+  tls: []
+
+# -- 资源（原 marathon.json: cpus=0.5, mem=1536Mi）
+resources:
+  requests:
+    cpu: 250m
+    memory: 768Mi
+  limits:
+    cpu: 500m
+    memory: 1536Mi
+
+# -- 探针(probe)配置（路径沿用原 marathon.json 的 /admin/health）
+probes:
+  path: /admin/health
+  liveness:
+    enabled: true
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+  startup:
+    enabled: true
+    failureThreshold: 30
+    periodSeconds: 10
+
+# -- HPA(可选)
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+# -- Pod-level 注解/容忍/拓扑(可选)
+podAnnotations: {}
+tolerations: []
+nodeSelector: {}
+affinity: {}
+
+# -- 资源配额/限额
+podSecurityContext: {}
+securityContext: {}
