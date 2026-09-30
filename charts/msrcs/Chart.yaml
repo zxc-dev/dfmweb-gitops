@@ -1,0 +1,13 @@
+apiVersion: v2
+name: msrcs
+description: msrcs Java Spring Boot 后端微服务（OTA 远程控制指令状态判断）
+type: application
+version: 0.1.0
+appVersion: "1-bcd37ad"
+keywords:
+  - backend
+  - spring-boot
+  - java
+maintainers:
+  - name: stellantis-overseas-tsp
+kubeVersion: ">=1.22.0-0"
