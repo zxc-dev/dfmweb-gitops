@@ -42,8 +42,8 @@ service:
   targetPortName: http
   # -- NLB 注解(AWS Load Balancer Controller external 模式)
   annotations:
-    # -- 由 AWS LB Controller 接管的 external NLB
-    service.beta.kubernetes.io/aws-load-balancer-type: external
+    # -- 负载均衡类型(NLB)
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
     # -- IP 模式直连 Pod
     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
     # -- 公网入口 / 内网改为 internal
