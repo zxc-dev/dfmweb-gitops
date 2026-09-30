@@ -1,0 +1,9 @@
+1. 应用 {{ include "msrcs.fullname" . }} 已部署。
+2. 容器端口: {{ .Values.service.containerPort }} (HTTP)
+3. 健康检查: {{ .Values.probes.path }}
+4. 访问方式:
+   - 集群内: http://{{ include "msrcs.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+5. 自定义部署:
+   helm upgrade --install {{ .Release.Name }} . \
+     --namespace {{ .Release.Namespace }} \
+     --set image.tag=<TAG>
