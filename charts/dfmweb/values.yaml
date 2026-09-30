@@ -32,45 +32,34 @@ serviceAccount:
   # -- 自定义名称(留空则使用默认生成)
   name: ""
 
+# -- Service 配置: 通过 AWS Load Balancer Controller 创建 NLB
 service:
-  type: ClusterIP
+  # -- LoadBalancer(NLB) / ClusterIP
+  type: LoadBalancer
   # -- Service 暴露端口
   port: 80
   # -- 容器端口名(对应 deployment.yaml 中 ports.name)
   targetPortName: http
+  # -- NLB 注解(AWS Load Balancer Controller external 模式)
+  annotations:
+    # -- 由 AWS LB Controller 接管的 external NLB
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    # -- IP 模式直连 Pod
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+    # -- 公网入口 / 内网改为 internal
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
 
-# -- Ingress 配置 (AWS ALB,由 AWS Load Balancer Controller 接管)
+# -- Ingress 已弃用(改用 Service type=LoadBalancer 的 NLB)
 ingress:
   # -- 是否创建 Ingress
-  enabled: true
-  # -- ingressClassName: 由 AWS Load Balancer Controller 提供的 "alb"
+  enabled: false
   className: alb
-  # -- ALB 注解(参考 https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.6/guide/ingress/annotations/)
-  annotations:
-    # -- 公网入口(internet-facing) / 内网改为 internal
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    # -- IP 模式直连 Pod;若用 NodePort 则改为 instance
-    alb.ingress.kubernetes.io/target-type: ip
-    # -- 临时只监听 HTTP 80,等 ACM 证书 ARN 拿到后再切 HTTPS 443
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
-    # -- 健康检查
-    alb.ingress.kubernetes.io/healthcheck-path: /
-    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
-    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
-    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
-    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
-    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
-    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
-    alb.ingress.kubernetes.io/success-codes: "200-399"
-    # -- 外部 DNS(可选,Route53 自动注册)
-    external-dns.alpha.kubernetes.io/hostname: tspweb.dfm-dev.stellantis.cloud
-  # -- 路由规则(host 留空可做 ALB 默认 catch-all)
+  annotations: {}
   hosts:
     - host: tspweb.dfm-dev.stellantis.cloud
       paths:
         - path: /
           pathType: Prefix
-  # -- ALB 不使用 spec.tls;TLS 由 alb.ingress.kubernetes.io/certificate-arn 注解提供
   tls: []
 
 resources:
