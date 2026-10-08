@@ -1,0 +1,15 @@
+apiVersion: v2
+name: nacos
+description: Nacos service on EKS via nacos-operator (Nacos CR + Operator Deployment).
+type: application
+version: 0.1.0
+# nacos/nacos-server version used for the Nacos instance pods
+appVersion: v2.5.4
+home: https://nacos.io/
+keywords:
+  - nacos
+  - service-discovery
+  - configuration
+  - alibaba
+maintainers:
+  - name: dfm-sit
