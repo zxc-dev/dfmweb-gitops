@@ -1,0 +1,103 @@
+{{- /*
+  One-shot debug Pod that uses a Nacos-namespace ServiceAccount bound to the
+  Operator's ClusterRole to introspect K8s and dump Pod/PVC/Event state for
+  the Nacos instance. Triggered by ArgoCD SyncHook so its stdout is captured
+  in `argocd app logs`. Disable via `debug.enabled=false` after diagnosis.
+*/}}
+{{- if .Values.debug.enabled | default false -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nacos.fullname" . }}-debug
+  namespace: {{ .Values.instance.namespace }}
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "nacos.fullname" . }}-debug
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "nacos.operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "nacos.fullname" . }}-debug
+    namespace: {{ .Values.instance.namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nacos.fullname" . }}-debug
+  namespace: {{ .Values.instance.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "10"
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      name: {{ include "nacos.fullname" . }}-debug
+    spec:
+      serviceAccountName: {{ include "nacos.fullname" . }}-debug
+      restartPolicy: Never
+      containers:
+        - name: debug
+          image: alpine:3.20
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              apk add --no-cache curl jq >/dev/null 2>&1 || true
+              TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+              API="https://kubernetes.default.svc"
+              H_AUTH="Authorization: Bearer $TOKEN"
+              echo "=========================================================="
+              echo "[debug] namespace=$NS  date=$(date -u +%FT%TZ)"
+              echo "=========================================================="
+              echo
+              echo "========== 1. nacos-headless service =========="
+              curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/services/nacos-headless" | jq '{name:.metadata.name, type:.spec.type, clusterIP:.spec.clusterIP, ipFamilies:.spec.ipFamilies, ports:.spec.ports}' || echo "  (no nacos-headless)"
+              echo
+              echo "========== 2. nacos-client service =========="
+              curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/services/nacos-client" | jq '{name:.metadata.name, type:.spec.type, clusterIP:.spec.clusterIP, ipFamilies:.spec.ipFamilies, ports:.spec.ports}' 2>/dev/null || echo "  (no nacos-client)"
+              echo
+              echo "========== 3. PVCs (db-nacos-*) =========="
+              curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/persistentvolumeclaims" | jq '.items[] | select(.metadata.name|startswith("db-nacos")) | {name:.metadata.name, phase:.status.phase, storageClassName:.spec.storageClassName, requests:.spec.resources.requests, volumeName:.spec.volumeName, conditions:.status.conditions}'
+              echo
+              echo "========== 4. Storage classes =========="
+              curl -sk --cacert $CACERT -H "$H_AUTH" "$API/apis/storage.k8s.io/v1/storageclasses" | jq '.items[] | {name:.metadata.name, provisioner:.provisioner, default:(.metadata.annotations["storageclass.kubernetes.io/is-default-class"] // "false"), reclaimPolicy:.reclaimPolicy, volumeBindingMode:.volumeBindingMode}'
+              echo
+              echo "========== 5. Pods (nacos-*) =========="
+              for p in nacos-0 nacos-1 nacos-2; do
+                echo "--- pod: $p ---"
+                curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/pods/$p" | jq '{name:.metadata.name, phase:.status.phase, podIP:.status.podIP, hostIP:.status.hostIP, nodeName:.spec.nodeName, conditions:.status.conditions, containerStatuses:[.status.containerStatuses[]? | {name, ready, restartCount, state, lastState, image}], initContainerStatuses:[.status.initContainerStatuses[]? | {name, ready, state, lastState, image}]}' 2>/dev/null || echo "  (no pod)"
+                echo
+              done
+              echo "========== 6. Events in $NS (latest 30) =========="
+              curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/events" | jq -r '.items | sort_by(.lastTimestamp) | reverse | .[:30] | .[] | "\(.lastTimestamp)  [\(.involvedObject.kind)/\(.involvedObject.name)]  \(.reason)  \(.message)"'
+              echo
+              echo "========== 7. nacos StatefulSet =========="
+              curl -sk --cacert $CACERT -H "$H_AUTH" "$API/apis/apps/v1/namespaces/$NS/statefulsets/nacos" | jq '{name:.metadata.name, replicas:.spec.replicas, readyReplicas:.status.readyReplicas, currentReplicas:.status.currentReplicas, currentRevision:.status.currentRevision, conditions:.status.conditions}' 2>/dev/null || echo "  (no statefulset)"
+              echo
+              echo "========== 8. Endpoints of nacos-headless =========="
+              curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/endpoints/nacos-headless" | jq '{subsets:[.subsets[]? | {addresses, ports}]}' 2>/dev/null || echo "  (no endpoints)"
+              echo
+              echo "=========================================================="
+              echo "[debug] done"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+{{- end -}}
