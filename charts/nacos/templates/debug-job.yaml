@@ -70,6 +70,9 @@ spec:
       containers:
         - name: debug
           image: alpine:3.20
+          env:
+            - name: K8S_API
+              value: https://kubernetes.default.svc
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -78,30 +81,56 @@ spec:
               TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
               CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
               NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-              API="https://kubernetes.default.svc"
-              H_AUTH="Authorization: Bearer $TOKEN"
-              # Use a bash subshell: continue past individual command failures.
-              dump() {
-                local title="$1"; shift
-                echo "========== $title =========="
-                "$@" || echo "  (request failed or empty)"
-                echo
-              }
               echo "=========================================================="
               echo "[debug] namespace=$NS  date=$(date -u +%FT%TZ)"
               echo "=========================================================="
               echo
-              dump "1. nacos-headless service" sh -c 'curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/services/nacos-headless" | jq "{name:.metadata.name, type:.spec.type, clusterIP:.spec.clusterIP, ipFamilies:.spec.ipFamilies, ports:.spec.ports}"'
-              dump "2. nacos-client service" sh -c 'curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/services/nacos-client" | jq "{name:.metadata.name, type:.spec.type, clusterIP:.spec.clusterIP, ipFamilies:.spec.ipFamilies, ports:.spec.ports}"'
-              dump "3. PVCs (db-nacos-*)" sh -c 'curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/persistentvolumeclaims" | jq "[.items[] | select(.metadata.name|startswith(\"db-nacos\"))] | if length==0 then \"  (no db-nacos-* PVC found)\" else .[] | {name:.metadata.name, phase:.status.phase, storageClassName:.spec.storageClassName, requests:.spec.resources.requests, volumeName:.spec.volumeName, conditions:.status.conditions} end"'
-              dump "4. Storage classes" sh -c 'curl -sk --cacert $CACERT -H "$H_AUTH" "$API/apis/storage.k8s.io/v1/storageclasses" | jq "[.items[] | {name:.metadata.name, provisioner:.provisioner, default:(.metadata.annotations[\"storageclass.kubernetes.io/is-default-class\"] // \"false\"), reclaimPolicy:.reclaimPolicy, volumeBindingMode:.volumeBindingMode}]"'
+
+              curl_get() {
+                local path="$1"
+                local out
+                out=$(curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOKEN" "$K8S_API$path") || return 1
+                echo "$out"
+              }
+
+              echo "========== 1. nacos-headless service =========="
+              curl_get "/api/v1/namespaces/$NS/services/nacos-headless" | jq '{name:.metadata.name, type:.spec.type, clusterIP:.spec.clusterIP, ipFamilies:.spec.ipFamilies, ports:.spec.ports}' || echo "  (request failed)"
+              echo
+
+              echo "========== 2. nacos-client service =========="
+              curl_get "/api/v1/namespaces/$NS/services/nacos-client" | jq '{name:.metadata.name, type:.spec.type, clusterIP:.spec.clusterIP, ipFamilies:.spec.ipFamilies, ports:.spec.ports}' || echo "  (request failed)"
+              echo
+
+              echo "========== 3. PVCs (db-nacos-*) =========="
+              curl_get "/api/v1/namespaces/$NS/persistentvolumeclaims" | jq '[.items[] | select(.metadata.name|startswith("db-nacos")) | {name:.metadata.name, phase:.status.phase, storageClassName:.spec.storageClassName, requests:.spec.resources.requests, volumeName:.spec.volumeName, conditions:.status.conditions}]' || echo "  (request failed)"
+              echo
+
+              echo "========== 4. Storage classes =========="
+              curl_get "/apis/storage.k8s.io/v1/storageclasses" | jq '[.items[] | {name:.metadata.name, provisioner:.provisioner, default:(.metadata.annotations["storageclass.kubernetes.io/is-default-class"] // "false"), reclaimPolicy:.reclaimPolicy, volumeBindingMode:.volumeBindingMode}]' || echo "  (request failed)"
+              echo
+
               for p in nacos-0 nacos-1 nacos-2; do
-                dump "5.$p Pod $p" sh -c "curl -sk --cacert \$CACERT -H \"\$H_AUTH\" \"\$API/api/v1/namespaces/\$NS/pods/$p\" | jq '{name:.metadata.name, phase:.status.phase, podIP:.status.podIP, hostIP:.status.hostIP, nodeName:.spec.nodeName, conditions:.status.conditions, containerStatuses:[.status.containerStatuses[]? | {name, ready, restartCount, state, lastState, image}], initContainerStatuses:[.status.initContainerStatuses[]? | {name, ready, state, lastState, image}]}'"
+                echo "========== 5.$p Pod $p =========="
+                curl_get "/api/v1/namespaces/$NS/pods/$p" | jq '{name:.metadata.name, phase:.status.phase, podIP:.status.podIP, hostIP:.status.hostIP, nodeName:.spec.nodeName, conditions:.status.conditions, containerStatuses:[.status.containerStatuses[]? | {name, ready, restartCount, state, lastState, image}], initContainerStatuses:[.status.initContainerStatuses[]? | {name, ready, state, lastState, image}], events:.status.conditions}' 2>/dev/null || echo "  (no pod)"
+                echo
               done
-              dump "6. Events in $NS (latest 50)" sh -c 'curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/events" | jq -r "[.items | sort_by(.lastTimestamp) | reverse | .[:50] | .[] | \"\\(.lastTimestamp)  [\\(.involvedObject.kind)/\\(.involvedObject.name)]  \\(.reason)  \\(.message)\"] | if length==0 then \"  (no events)\" else .[] end"'
-              dump "7. nacos StatefulSet" sh -c 'curl -sk --cacert $CACERT -H "$H_AUTH" "$API/apis/apps/v1/namespaces/$NS/statefulsets/nacos" | jq "{name:.metadata.name, replicas:.spec.replicas, readyReplicas:.status.readyReplicas, currentReplicas:.status.currentReplicas, currentRevision:.status.currentRevision, conditions:.status.conditions}"'
-              dump "8. Endpoints of nacos-headless" sh -c 'curl -sk --cacert $CACERT -H "$H_AUTH" "$API/api/v1/namespaces/$NS/endpoints/nacos-headless" | jq "{subsets:[.subsets[]? | {addresses, ports}]}"'
-              dump "9. Nacos CR status" sh -c 'curl -sk --cacert $CACERT -H "$H_AUTH" "$API/apis/nacos.io/v1/namespaces/$NS/nacos/nacos" | jq "{name:.metadata.name, phase:.status.phase, version:.status.version, conditions:.status.conditions, podCount:(.status.podCount // \"-\")}"'
+
+              echo "========== 6. Events in $NS (latest 50) =========="
+              curl_get "/api/v1/namespaces/$NS/events" | jq -r '(.items // []) | sort_by(.lastTimestamp) | reverse | .[:50] | .[] | "\(.lastTimestamp)  [\(.involvedObject.kind)/\(.involvedObject.name)]  \(.reason)  \(.message)"' 2>/dev/null || echo "  (request failed)"
+              echo
+
+              echo "========== 7. nacos StatefulSet =========="
+              curl_get "/apis/apps/v1/namespaces/$NS/statefulsets/nacos" | jq '{name:.metadata.name, replicas:.spec.replicas, readyReplicas:.status.readyReplicas, currentReplicas:.status.currentReplicas, currentRevision:.status.currentRevision, conditions:.status.conditions}' || echo "  (request failed)"
+              echo
+
+              echo "========== 8. Endpoints of nacos-headless =========="
+              curl_get "/api/v1/namespaces/$NS/endpoints/nacos-headless" | jq '{subsets:[.subsets[]? | {addresses, ports}]}' || echo "  (request failed)"
+              echo
+
+              echo "========== 9. Nacos CR status =========="
+              curl_get "/apis/nacos.io/v1/namespaces/$NS/nacos/nacos" | jq '{name:.metadata.name, phase:.status.phase, version:.status.version, conditions:.status.conditions, podCount:(.status.podCount // "-")}' || echo "  (request failed)"
+              echo
+
               echo "=========================================================="
               echo "[debug] done"
           resources:
