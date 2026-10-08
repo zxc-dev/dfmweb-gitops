@@ -121,3 +121,10 @@ instance:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+
+# ===== Debug ================================================================
+# When true, the chart renders a one-shot Job (SyncHook) that uses the
+# Operator's ClusterRole to dump Pod/PVC/Event state into the ArgoCD log
+# stream. Disable after diagnosis.
+debug:
+  enabled: true
