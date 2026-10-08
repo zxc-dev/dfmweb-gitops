@@ -1,0 +1,239 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.operator.namespace }}
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nacos-operator
+{{- if .Values.operator.installCRD }}
+
+---
+# Source: chart/nacos-operator/crds/crd.yaml
+# Vendored from nacos-group/nacos-k8s v0.1.1 (apiextensions.k8s.io/v1 form).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: nacos.nacos.io
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nacos-operator
+spec:
+  group: nacos.io
+  names:
+    kind: Nacos
+    listKind: NacosList
+    plural: nacos
+    singular: nacos
+  scope: Namespaced
+  versions:
+    - additionalPrinterColumns:
+        - jsonPath: .spec.replicas
+          name: Replicas
+          type: string
+        - jsonPath: .status.phase
+          name: Ready
+          type: string
+        - jsonPath: .spec.type
+          name: type
+          type: string
+        - jsonPath: .spec.database.type
+          name: dbType
+          type: string
+        - jsonPath: .status.version
+          name: Version
+          type: string
+        - jsonPath: .metadata.creationTimestamp
+          name: CreateTime
+          type: string
+      name: v1alpha1
+      schema:
+        openAPIV3Schema:
+          description: Nacos is the Schema for the nacos API
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: NacosSpec defines the desired state of Nacos
+              properties:
+                affinity:
+                  description: Affinity is a group of affinity scheduling rules.
+                  type: object
+                certification:
+                  description: Enable authentication
+                  properties:
+                    cache_enabled:
+                      type: boolean
+                    enabled:
+                      type: boolean
+                    token:
+                      type: string
+                    token_expire_seconds:
+                      type: string
+                  type: object
+                config:
+                  description: Configuration file content (multi-line YAML/properties)
+                  type: string
+                database:
+                  properties:
+                    mysqlDb:
+                      type: string
+                    mysqlHost:
+                      type: string
+                    mysqlPassword:
+                      type: string
+                    mysqlPort:
+                      type: string
+                    mysqlUser:
+                      type: string
+                    type:
+                      type: string
+                  type: object
+                env:
+                  items:
+                    description: EnvVar represents an environment variable present in a Container.
+                    properties:
+                      name:
+                        type: string
+                      value:
+                        type: string
+                      valueFrom:
+                        type: object
+                    required:
+                      - name
+                    type: object
+                  type: array
+                image:
+                  description: Image for the Nacos server pods.
+                  type: string
+                imagePullSecrets:
+                  items:
+                    properties:
+                      name:
+                        type: string
+                    type: object
+                  type: array
+                mysqlInitImage:
+                  description: Image used to run the one-shot MySQL init job.
+                  type: string
+                nodeSelector:
+                  additionalProperties:
+                    type: string
+                  type: object
+                replicas:
+                  format: int32
+                  type: integer
+                resources:
+                  description: Compute resources for the Nacos server pods.
+                  properties:
+                    limits:
+                      additionalProperties:
+                        anyOf:
+                          - type: integer
+                          - type: string
+                        x-kubernetes-int-or-string: true
+                      type: object
+                    requests:
+                      additionalProperties:
+                        anyOf:
+                          - type: integer
+                          - type: string
+                        x-kubernetes-int-or-string: true
+                      type: object
+                  type: object
+                tolerations:
+                  items:
+                    properties:
+                      effect:
+                        type: string
+                      key:
+                        type: string
+                      operator:
+                        type: string
+                      tolerationSeconds:
+                        format: int64
+                        type: integer
+                      value:
+                        type: string
+                    type: object
+                  type: array
+                type:
+                  description: Deployment mode (standalone or cluster).
+                  type: string
+                volume:
+                  properties:
+                    enabled:
+                      type: boolean
+                    requests:
+                      additionalProperties:
+                        anyOf:
+                          - type: integer
+                          - type: string
+                        x-kubernetes-int-or-string: true
+                      type: object
+                    storageClass:
+                      type: string
+                  type: object
+              type: object
+            status:
+              description: NacosStatus defines the observed state of Nacos
+              properties:
+                conditions:
+                  items:
+                    properties:
+                      hostIP:
+                        type: string
+                      instance:
+                        type: string
+                      message:
+                        type: string
+                      nodeName:
+                        type: string
+                      podName:
+                        type: string
+                      reason:
+                        type: string
+                      status:
+                        type: string
+                      type:
+                        type: string
+                    required:
+                      - status
+                      - type
+                    type: object
+                  type: array
+                event:
+                  items:
+                    properties:
+                      code:
+                        format: int32
+                        type: integer
+                      firstAppearTime:
+                        format: date-time
+                        type: string
+                      lastTransitionTime:
+                        format: date-time
+                        type: string
+                      message:
+                        type: string
+                      status:
+                        type: boolean
+                    required:
+                      - status
+                    type: object
+                  type: array
+                phase:
+                  description: Current lifecycle phase of the Nacos CR.
+                  type: string
+                version:
+                  type: string
+              type: object
+          type: object
+      served: true
+      storage: true
+      subresources:
+        status: {}
+{{- end }}
