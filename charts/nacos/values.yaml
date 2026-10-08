@@ -1,0 +1,123 @@
+# -----------------------------------------------------------------------------
+# Default values for the `nacos` chart.
+#
+# This single chart brings up two things:
+#   1. The Nacos Operator (Deployment + ServiceAccount + ClusterRole/Binding + CRD)
+#      in the namespace `operator.namespace`.
+#   2. The Nacos CR instance (kind: Nacos, apiVersion: nacos.io/v1alpha1) in the
+#      namespace `instance.namespace`, which causes the operator to reconcile
+#      a `nacos` StatefulSet + headless / cluster / client Services.
+#
+# Java / Spring Cloud backends can discover the config server at:
+#   nacos-headless.<instance.namespace>.svc.cluster.local:8848
+# -----------------------------------------------------------------------------
+
+# ===== Operator =============================================================
+operator:
+  # Where the Operator Deployment, SA, etc. are installed.
+  namespace: nacos-system
+
+  replicaCount: 1
+
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  # Pinned image (skill rule: never rely on :latest).
+  image:
+    repository: nacos/nacos-operator
+    tag: v1.0.2
+    pullPolicy: IfNotPresent
+
+  imagePullSecrets: []
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  fullnameOverride: ""
+
+  # Whether to install the Nacos CRD (true on first install; set to false if you
+  # already have another chart managing the CRD, or to test template-only runs).
+  installCRD: true
+
+# ===== Nacos instance =======================================================
+instance:
+  # Java clients use:
+  #   nacos-headless.<namespace>.svc.cluster.local:8848
+  namespace: nacos
+
+  # Nacos CR metadata.name -- together with `namespace` this fixes Service DNS
+  # names such as `nacos-headless.nacos.svc.cluster.local`.
+  name: nacos
+
+  # Mode: cluster | standalone
+  type: cluster
+
+  # Number of Nacos server pods (only meaningful for `type: cluster`).
+  replicas: 3
+
+  # Nacos server image. Skill rule: pin the exact tag.
+  image:
+    repository: nacos/nacos-server
+    tag: v2.5.4
+    pullPolicy: IfNotPresent
+
+  # Embedded vs MySQL. With `type: embedded` the operator will create a
+  # StatefulSet that persists the small Derby dataset to a PVC (this requires
+  # `volume.enabled: true`). Switch to mysql later when a real DB is available.
+  database:
+    type: embedded
+    # Uncomment to use MySQL instead:
+    # mysqlHost: mysql
+    # mysqlPort: 3306
+    # mysqlDb: nacos
+    # mysqlUser: nacos
+    # mysqlPassword: change-me
+    mysqlInitImage: alpine:3.20
+
+  # Persistence for embedded Derby storage. Recommended in cluster mode.
+  volume:
+    enabled: true
+    storageSize: 2Gi
+    storageClassName: gp3
+    accessModes:
+      - ReadWriteOnce
+
+  # Extra env vars passed to the Nacos server container.
+  env:
+    - name: JVM_XMN
+      value: 512m
+    - name: JVM_XMS
+      value: 1g
+    - name: JVM_XMX
+      value: 1g
+
+  # Authentication toggles. Mirrors the env vars the operator passes to the
+  # Nacos server when `certification.enabled: true`. We expose them as plain
+  # env entries via `env:` above so this block stays self-documenting.
+  authentication:
+    enabled: true
+    token: SecretKey0123456789012345678901234567890123456789012345678901234567890123
+    tokenExpireSeconds: "18000"
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 1Gi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
