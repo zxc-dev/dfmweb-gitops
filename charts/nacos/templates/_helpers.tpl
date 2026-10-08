@@ -52,3 +52,16 @@ Operator ServiceAccount name.
 {{- default "default" .Values.operator.serviceAccount.name -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+Instance fullname (used for the debug SA/Job/CRB).
+*/}}
+{{- define "nacos.fullname" -}}
+{{- $def := include "nacos.name" . -}}
+{{- $release := .Release.Name -}}
+{{- if contains $release $def -}}
+{{- $def | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" $release $def | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end }}
