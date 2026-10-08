@@ -86,10 +86,13 @@ instance:
     mysqlInitImage: alpine:3.20
 
   # Persistence for embedded Derby storage. Recommended in cluster mode.
+  # NOTE: this EKS cluster only ships the legacy `gp2` storage class; if you
+  # later provision `gp3` (or any other class), change `storageClassName`
+  # here and ArgoCD will re-apply the Nacos CR.
   volume:
     enabled: true
     storageSize: 2Gi
-    storageClassName: gp3
+    storageClassName: gp2
     accessModes:
       - ReadWriteOnce
 
