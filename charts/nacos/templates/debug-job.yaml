@@ -21,13 +21,16 @@ metadata:
     {{- include "nacos.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
-    resources: [pods, services, endpoints, configmaps, persistentvolumeclaims, events, namespaces]
+    resources: [pods, services, endpoints, configmaps, persistentvolumeclaims, events, namespaces, nodes]
     verbs: [get, list, watch, delete]
   - apiGroups: ["apps"]
-    resources: [statefulsets, deployments, replicasets]
+    resources: [statefulsets, deployments, replicasets, daemonsets]
     verbs: [get, list, watch, delete]
   - apiGroups: ["storage.k8s.io"]
-    resources: [storageclasses]
+    resources: [storageclasses, csidrivers, csinodes]
+    verbs: [get, list, watch]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: [mutatingwebhookconfigurations, validatingwebhookconfigurations]
     verbs: [get, list, watch]
   - apiGroups: ["nacos.io"]
     resources: [nacos, nacos/status]
@@ -95,54 +98,43 @@ spec:
                 curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOKEN" -X DELETE "$K8S_API$path"
               }
 
-              echo "========== 1. nacos-headless service =========="
-              curl_get "/api/v1/namespaces/$NS/services/nacos-headless" | jq '{name:.metadata.name, type:.spec.type, clusterIP:.spec.clusterIP, ipFamilies:.spec.ipFamilies, ports:.spec.ports}'
+              echo "========== 1. CSIDrivers (cluster-wide) =========="
+              curl_get "/apis/storage.k8s.io/v1/csidrivers" | jq '[.items[] | {name, attachRequired, podInfoOnMount, storageCapacity, supportedFsTypePolicies, volumeLifecycleModes}]'
               echo
 
-              echo "========== 2. nacos-client service =========="
-              curl_get "/api/v1/namespaces/$NS/services/nacos-client" | jq '{name:.metadata.name, type:.spec.type, clusterIP:.spec.clusterIP, ipFamilies:.spec.ipFamilies, ports:.spec.ports}'
+              echo "========== 2. CSINodes =========="
+              curl_get "/apis/storage.k8s.io/v1/csinodes" | jq '[.items[] | {name, drivers:[.spec.drivers[] | {name, nodeID, topologyKeys, allocatable}]}]'
               echo
 
-              echo "========== 3. PVCs (db-nacos-*) =========="
-              curl_get "/api/v1/namespaces/$NS/persistentvolumeclaims" | jq '[.items[] | select(.metadata.name|startswith("db-nacos")) | {name:.metadata.name, phase:.status.phase, storageClassName:.spec.storageClassName, requests:.spec.resources.requests, volumeName:.spec.volumeName, conditions:.status.conditions}]'
+              echo "========== 3. Storage classes =========="
+              curl_get "/apis/storage.k8s.io/v1/storageclasses" | jq '[.items[] | {name, provisioner, default:(.metadata.annotations["storageclass.kubernetes.io/is-default-class"] // "false"), reclaimPolicy, volumeBindingMode, allowVolumeExpansion, parameters, mountOptions}]'
               echo
 
-              echo "========== 4. Storage classes =========="
-              curl_get "/apis/storage.k8s.io/v1/storageclasses" | jq '[.items[] | {name:.metadata.name, provisioner:.provisioner, default:(.metadata.annotations["storageclass.kubernetes.io/is-default-class"] // "false"), reclaimPolicy:.reclaimPolicy, volumeBindingMode:.volumeBindingMode}]'
+              echo "========== 4. ebbs-csi pods cluster-wide =========="
+              curl_get "/api/v1/pods?labelSelector=app.kubernetes.io%3Dname%3Debs-csi-driver" | jq '[.items[] | {name, namespace, nodeName, phase, containerStatuses:[.status.containerStatuses[]? | {name, ready, image}]}]'
               echo
 
+              echo "========== 5. DaemonSets cluster-wide (csi related) =========="
+              curl_get "/apis/apps/v1/daemonsets?labelSelector=app.kubernetes.io%2Fname%3Debs-csi-driver" | jq '[.items[] | {name, namespace, desiredNumberScheduled, numberReady, numberAvailable}]'
+              echo
+
+              echo "========== 6. PVCs (db-nacos-*) =========="
+              curl_get "/api/v1/namespaces/$NS/persistentvolumeclaims" | jq '[.items[] | select(.metadata.name|startswith("db-nacos")) | {name, phase, storageClassName, requests:.spec.resources.requests, volumeName, conditions, finalizers:.metadata.finalizers}]'
+              echo
+
+              echo "========== 7. Pods (nacos-*) =========="
               for p in nacos-0 nacos-1 nacos-2; do
-                echo "========== 5.$p Pod $p =========="
-                curl_get "/api/v1/namespaces/$NS/pods/$p" | jq '{name:.metadata.name, phase:.status.phase, podIP:.status.podIP, hostIP:.status.hostIP, nodeName:.spec.nodeName, conditions:.status.conditions, containerStatuses:[.status.containerStatuses[]? | {name, ready, restartCount, state, lastState, image}], initContainerStatuses:[.status.initContainerStatuses[]? | {name, ready, state, lastState, image}]}'
+                echo "--- $p ---"
+                curl_get "/api/v1/namespaces/$NS/pods/$p" | jq '{name, phase, podIP, nodeName, conditions:.status.conditions, containerStatuses:[.status.containerStatuses[]? | {name, ready, state, lastState}]}'
                 echo
               done
 
-              echo "========== 6. Events in $NS (latest 50) =========="
-              curl_get "/api/v1/namespaces/$NS/events" | jq -r '(.items // []) | sort_by(.lastTimestamp) | reverse | .[:50] | .[] | "\(.lastTimestamp)  [\(.involvedObject.kind)/\(.involvedObject.name)]  \(.reason)  \(.message)"'
+              echo "========== 8. Events in $NS (latest 30) =========="
+              curl_get "/api/v1/namespaces/$NS/events" | jq -r '(.items // []) | sort_by(.lastTimestamp) | reverse | .[:30] | .[] | "\(.lastTimestamp)  [\(.involvedObject.kind)/\(.involvedObject.name)]  \(.reason)  \(.message)"'
               echo
 
-              echo "========== 7. nacos StatefulSet =========="
-              curl_get "/apis/apps/v1/namespaces/$NS/statefulsets/nacos" | jq '{name:.metadata.name, replicas:.spec.replicas, readyReplicas:.status.readyReplicas, currentReplicas:.status.currentReplicas, currentRevision:.status.currentRevision, conditions:.status.conditions, volumeClaimTemplates:[.spec.volumeClaimTemplates[]? | {name, storageClassName:.spec.storageClassName, requests:.spec.resources.requests}]}'
-              echo
-
-              echo "========== 8. Endpoints of nacos-headless =========="
-              curl_get "/api/v1/namespaces/$NS/endpoints/nacos-headless" | jq '{subsets:[.subsets[]? | {addresses, ports}]}'
-              echo
-
-              echo "========== 9. Nacos CR status =========="
-              curl_get "/apis/nacos.io/v1/namespaces/$NS/nacos/nacos" | jq '{name:.metadata.name, phase:.status.phase, version:.status.version, conditions:.status.conditions, podCount:(.status.podCount // "-"), specVolume:.spec.volume}'
-              echo
-
-              # Heal: delete the stuck PVCs (and the StatefulSet so its template
-              # is reapplied cleanly) so the operator recreates them with the
-              # correct storage class from the Nacos CR.
-              echo "========== HEAL: deleting stuck PVCs + StatefulSet =========="
-              for pvc in db-nacos-0 db-nacos-1 db-nacos-2; do
-                echo "  - delete pvc/$pvc"
-                curl_del "/api/v1/namespaces/$NS/persistentvolumeclaims/$pvc" -o /dev/null -w "    HTTP=%{http_code}\n"
-              done
-              echo "  - delete statefulset/nacos"
-              curl_del "/apis/apps/v1/namespaces/$NS/statefulsets/nacos" -o /dev/null -w "    HTTP=%{http_code}\n"
+              echo "========== 9. Nodes (az + taints) =========="
+              curl_get "/api/v1/nodes" | jq '[.items[] | {name:.metadata.name, zone:(.metadata.labels["topology.kubernetes.io/zone"] // "?"), instanceType:(.metadata.labels["node.kubernetes.io/instance-type"] // "?"), unschedulable:.spec.unschedulable, taints:.spec.taints}]'
               echo
 
               echo "=========================================================="
