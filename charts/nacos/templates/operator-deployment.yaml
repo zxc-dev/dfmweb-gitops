@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nacos.operator.fullname" . }}
+  namespace: {{ .Values.operator.namespace }}
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nacos-operator
+spec:
+  replicas: {{ .Values.operator.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "nacos.name" . }}
+      app.kubernetes.io/component: nacos-operator
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "nacos.name" . }}
+        app.kubernetes.io/component: nacos-operator
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: stellantis-overseas-tsp
+    spec:
+      serviceAccountName: {{ include "nacos.operator.serviceAccountName" . }}
+      {{- with .Values.operator.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: manager
+          image: "{{ .Values.operator.image.repository }}:{{ .Values.operator.image.tag }}"
+          imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
+          command: ["/manager"]
+          args: ["--enable-leader-election"]
+          resources:
+            {{- toYaml .Values.operator.resources | nindent 12 }}
+      {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+# Operator metrics/management service -- ClusterIP, only consumed inside the
+# cluster by humans poking at /metrics if they ever choose to expose it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nacos.operator.fullname" . }}
+  namespace: {{ .Values.operator.namespace }}
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nacos-operator
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ include "nacos.name" . }}
+    app.kubernetes.io/component: nacos-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
