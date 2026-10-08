@@ -1,0 +1,62 @@
+apiVersion: nacos.io/v1alpha1
+kind: Nacos
+metadata:
+  name: {{ .Values.instance.name }}
+  namespace: {{ .Values.instance.namespace }}
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nacos-instance
+spec:
+  # standalone | cluster
+  type: {{ .Values.instance.type }}
+  image: "{{ .Values.instance.image.repository }}:{{ .Values.instance.image.tag }}"
+  mysqlInitImage: {{ .Values.instance.database.mysqlInitImage | quote }}
+  {{- if and (eq .Values.instance.type "cluster") (.Values.instance.replicas) }}
+  replicas: {{ .Values.instance.replicas }}
+  {{- end }}
+  database:
+    type: {{ .Values.instance.database.type }}
+    {{- if eq .Values.instance.database.type "mysql" }}
+    mysqlHost: {{ required "instance.database.mysqlHost is required when type is mysql" .Values.instance.database.mysqlHost | quote }}
+    mysqlDb: {{ required "instance.database.mysqlDb is required when type is mysql" .Values.instance.database.mysqlDb | quote }}
+    mysqlUser: {{ required "instance.database.mysqlUser is required when type is mysql" .Values.instance.database.mysqlUser | quote }}
+    mysqlPort: {{ .Values.instance.database.mysqlPort | default "3306" | quote }}
+    mysqlPassword: {{ .Values.instance.database.mysqlPassword | quote }}
+    {{- end }}
+  {{- if .Values.instance.volume.enabled }}
+  volume:
+    enabled: true
+    requests:
+      storage: {{ .Values.instance.volume.storageSize | quote }}
+    storageClass: {{ .Values.instance.volume.storageClassName | quote }}
+  {{- end }}
+  {{- with .Values.instance.env }}
+  env:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.instance.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.instance.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.instance.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.instance.affinity }}
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if .Values.instance.authentication.enabled }}
+  certification:
+    enabled: true
+    {{- if .Values.instance.authentication.token }}
+    token: {{ .Values.instance.authentication.token | quote }}
+    {{- end }}
+    {{- if .Values.instance.authentication.tokenExpireSeconds }}
+    token_expire_seconds: {{ .Values.instance.authentication.tokenExpireSeconds | quote }}
+    {{- end }}
+  {{- end }}
