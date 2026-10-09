@@ -1,0 +1,40 @@
+{{- /*
+  One-shot cleanup hook.
+
+  Purpose:  ArgoCD won't auto-prune a previously created SyncHook Job whose
+  template has been removed from the chart (the `argocd.argoproj.io/hook-delete-policy:
+  BeforeHookCreation` annotation only fires when a NEW hook of the same phase
+  is about to be created). This PostSync hook is a tiny no-op (sleep 5s) that
+  exists *only* to trigger that deletion. After a single sync, the old
+  `nacos-debug` Job and its Pod disappear and this file can be removed again.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nacos.fullname" . }}-cleanup-hook
+  namespace: {{ .Values.instance.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "5"
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      name: {{ include "nacos.fullname" . }}-cleanup-hook
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: alpine:3.20
+          command: ["/bin/sh", "-c", "echo cleanup-hook placeholder; sleep 5"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
