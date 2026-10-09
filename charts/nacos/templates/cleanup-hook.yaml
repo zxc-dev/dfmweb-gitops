@@ -1,13 +1,14 @@
 {{- /*
-  One-shot cleanup hook (v2).
+  One-shot cleanup hook (v3 — PreSync + wget + grep).
 
-  Why v2: the previous version tried to parse JSON with `python3` which is
-  NOT installed in the `alpine:3.20` image — the for-loop silently produced
-  no items and nothing was deleted. This version uses `wget` (which Alpine
-  ships by default) and parses the JSON by hand with grep/sed so we don't
-  depend on any extra package.
+  Why v3: the previous two attempts used `python3` / `curl` which weren't in
+  the `alpine:3.20` base image, so the JSON-parsing step silently produced
+  zero items. v3 switches to `wget` (built into Alpine) + `grep`/`sed` for
+  parsing, switches the hook to `PreSync` so it runs *before* the regular
+  sync (giving ArgoCD no chance to interact with the stale hook), and
+  cleans up its own resources after a successful run via `HookSucceeded`.
 
-  After this one-shot run the legacy `nacos-debug*` resources are gone and
+  After this single sync the legacy `nacos-debug*` resources are gone and
   this file can be removed again on a follow-up sync.
 */}}
 apiVersion: v1
@@ -55,9 +56,9 @@ metadata:
   name: {{ include "nacos.fullname" . }}-cleanup-hook
   namespace: {{ .Values.instance.namespace }}
   annotations:
-    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
-    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-wave: "-1"
   labels:
     {{- include "nacos.labels" . | nindent 4 }}
 spec:
@@ -80,45 +81,55 @@ spec:
               CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
               NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
               API="https://kubernetes.default.svc"
-              # wget on Alpine supports --ca-certificate, --header, --method, --body-data
               H="Authorization: Bearer $TOK"
 
+              echo "[cleanup-hook] ns=$NS"
+
+              # Helper: issue a GET and extract every `"name":"<value>"` entry
               list_names() {
-                # $1 = path (e.g. /apis/batch/v1/namespaces/$NS/jobs)
-                # extracts every "name":"<value>" pair and prints them one per line
                 wget --quiet --ca-certificate="$CACERT" --header="$H" -O - \
-                  "$API$1" \
+                  "$API$1" 2>/dev/null \
                   | tr ',' '\n' \
-                  | grep -oE '"name"\s*:\s*"[^"]+"' \
-                  | sed 's/.*"name"\s*:\s*"\(.*\)"/\1/'
+                  | grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+                  | sed 's/.*"name"[[:space:]]*:[[:space:]]*"\(.*\)"/\1/'
               }
 
+              # Helper: issue a DELETE and print the HTTP status code
               delete() {
-                local code
-                code=$(wget --quiet --ca-certificate="$CACERT" --header="$H" \
+                local resp
+                resp=$(wget --quiet --ca-certificate="$CACERT" --header="$H" \
                   --method=DELETE -O /dev/null \
-                  --server-response "$API$1" 2>&1 \
-                  | grep -oE '^  HTTP/[0-9.]+ [0-9]+' \
-                  | head -1 | awk '{print $2}')
+                  --server-response "$API$1" 2>&1)
+                local code
+                code=$(printf '%s' "$resp" | grep -oE '^  HTTP/[0-9.]+ [0-9]+' | head -1 | awk '{print $2}')
                 echo "    HTTP=${code:-?}"
               }
 
-              echo "[cleanup-hook] starting cleanup in ns=$NS"
+              echo "[cleanup-hook] === jobs matching nacos-debug* ==="
+              N=$(list_names "/apis/batch/v1/namespaces/$NS/jobs" | grep '^nacos-debug' | wc -l | tr -d ' ')
+              echo "  found $N"
               for j in $(list_names "/apis/batch/v1/namespaces/$NS/jobs" | grep '^nacos-debug'); do
                 echo "  - delete job/$j"
                 delete "/apis/batch/v1/namespaces/$NS/jobs/$j"
               done
+
+              echo "[cleanup-hook] === pods matching nacos-debug* ==="
+              N=$(list_names "/api/v1/namespaces/$NS/pods" | grep '^nacos-debug' | wc -l | tr -d ' ')
+              echo "  found $N"
               for p in $(list_names "/api/v1/namespaces/$NS/pods" | grep '^nacos-debug'); do
                 echo "  - delete pod/$p"
                 delete "/api/v1/namespaces/$NS/pods/$p"
               done
-              # Legacy SA / Role / RoleBinding (in case the first chart version with the
-              # global ClusterRole/CRB is still around)
+
+              # Legacy SA/Role/RoleBinding (in case the first chart version is
+              # still around).
               for r in serviceaccount/nacos-debug role/nacos-debug rolebinding/nacos-debug; do
-                echo "  - delete $r"
-                delete "/api/v1/namespaces/$NS/$r" >/dev/null 2>&1 || true
-                echo "    (skipped or done)"
+                echo "  - delete $r (best-effort)"
+                wget --quiet --ca-certificate="$CACERT" --header="$H" \
+                  --method=DELETE -O /dev/null \
+                  "$API/api/v1/namespaces/$NS/$r" >/dev/null 2>&1 || true
               done
+
               echo "[cleanup-hook] done"
           resources:
             requests:
