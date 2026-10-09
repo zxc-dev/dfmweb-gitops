@@ -1,13 +1,11 @@
 {{- /*
-  One-shot cleanup hook.
+  One-shot cleanup hook (v2).
 
-  Purpose:  ArgoCD won't auto-prune a previously created SyncHook Job whose
-  template has been removed from the chart (the `argocd.argoproj.io/hook-delete-policy:
-  BeforeHookCreation` annotation only fires reliably for the SAME hook, not
-  for unrelated ones). This PostSync hook therefore:
-    1. grants itself a tiny RBAC role (delete on jobs + pods in this ns)
-    2. issues K8s API DELETE calls for the legacy `nacos-debug-*` resources
-    3. exits 0 so ArgoCD marks the hook Succeeded
+  Why v2: the previous version tried to parse JSON with `python3` which is
+  NOT installed in the `alpine:3.20` image — the for-loop silently produced
+  no items and nothing was deleted. This version uses `wget` (which Alpine
+  ships by default) and parses the JSON by hand with grep/sed so we don't
+  depend on any extra package.
 
   After this one-shot run the legacy `nacos-debug*` resources are gone and
   this file can be removed again on a follow-up sync.
@@ -78,38 +76,48 @@ spec:
           args:
             - |
               set -u
-              apk add --no-cache curl >/dev/null 2>&1 || true
               TOK=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
               CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
               NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
               API="https://kubernetes.default.svc"
-              echo "[cleanup-hook] removing legacy nacos-debug* resources in ns=$NS"
-              # Jobs
-              for j in $(curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" "$API/apis/batch/v1/namespaces/$NS/jobs" \
-                         | python3 -c "import sys,json;[print(x['metadata']['name']) for x in json.load(sys.stdin)['items'] if x['metadata']['name'].startswith('nacos-debug')]"); do
+              # wget on Alpine supports --ca-certificate, --header, --method, --body-data
+              H="Authorization: Bearer $TOK"
+
+              list_names() {
+                # $1 = path (e.g. /apis/batch/v1/namespaces/$NS/jobs)
+                # extracts every "name":"<value>" pair and prints them one per line
+                wget --quiet --ca-certificate="$CACERT" --header="$H" -O - \
+                  "$API$1" \
+                  | tr ',' '\n' \
+                  | grep -oE '"name"\s*:\s*"[^"]+"' \
+                  | sed 's/.*"name"\s*:\s*"\(.*\)"/\1/'
+              }
+
+              delete() {
+                local code
+                code=$(wget --quiet --ca-certificate="$CACERT" --header="$H" \
+                  --method=DELETE -O /dev/null \
+                  --server-response "$API$1" 2>&1 \
+                  | grep -oE '^  HTTP/[0-9.]+ [0-9]+' \
+                  | head -1 | awk '{print $2}')
+                echo "    HTTP=${code:-?}"
+              }
+
+              echo "[cleanup-hook] starting cleanup in ns=$NS"
+              for j in $(list_names "/apis/batch/v1/namespaces/$NS/jobs" | grep '^nacos-debug'); do
                 echo "  - delete job/$j"
-                curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" -X DELETE \
-                  "$API/apis/batch/v1/namespaces/$NS/jobs/$j" \
-                  -o /dev/null -w "    HTTP=%{http_code}\n"
+                delete "/apis/batch/v1/namespaces/$NS/jobs/$j"
               done
-              # Pods (stragglers, e.g. if the Job is gone but the Pod still terminates)
-              for p in $(curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" "$API/api/v1/namespaces/$NS/pods" \
-                         | python3 -c "import sys,json;[print(x['metadata']['name']) for x in json.load(sys.stdin)['items'] if x['metadata']['name'].startswith('nacos-debug')]"); do
+              for p in $(list_names "/api/v1/namespaces/$NS/pods" | grep '^nacos-debug'); do
                 echo "  - delete pod/$p"
-                curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" -X DELETE \
-                  "$API/api/v1/namespaces/$NS/pods/$p" \
-                  -o /dev/null -w "    HTTP=%{http_code}\n"
+                delete "/api/v1/namespaces/$NS/pods/$p"
               done
-              # ServiceAccount / ClusterRole / ClusterRoleBinding (legacy debug resources)
-              for r in "serviceaccount/nacos-debug" "role/nacos-debug" "rolebinding/nacos-debug"; do
+              # Legacy SA / Role / RoleBinding (in case the first chart version with the
+              # global ClusterRole/CRB is still around)
+              for r in serviceaccount/nacos-debug role/nacos-debug rolebinding/nacos-debug; do
                 echo "  - delete $r"
-                curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" -X DELETE \
-                  "$API/api/v1/namespaces/$NS/$r" -o /dev/null -w "    HTTP=%{http_code}\n" || true
-              done
-              for r in "clusterrole/nacos-debug" "clusterrolebinding/nacos-debug"; do
-                echo "  - delete $r"
-                curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" -X DELETE \
-                  "$API/apis/rbac.authorization.k8s.io/v1/$r" -o /dev/null -w "    HTTP=%{http_code}\n" || true
+                delete "/api/v1/namespaces/$NS/$r" >/dev/null 2>&1 || true
+                echo "    (skipped or done)"
               done
               echo "[cleanup-hook] done"
           resources:
