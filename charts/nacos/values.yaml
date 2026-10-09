@@ -130,4 +130,4 @@ instance:
 # Operator's ClusterRole to dump Pod/PVC/Event state into the ArgoCD log
 # stream. Disable after diagnosis.
 debug:
-  enabled: true
+  enabled: false
