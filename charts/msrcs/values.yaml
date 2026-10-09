@@ -19,6 +19,40 @@ env:
   # -- 时区
   TZ: "Asia/Shanghai"
 
+  # ===== Nacos 配置中心 =====
+  # bootstrap.yml 写的是 nacos-headless.nacos.svc.cluster.local:8848, 本集群没有这个 Service,
+  # 改用 nacos-client.nacos.svc.cluster.local:8848(同 namespace 内 ClusterIP)
+  SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: "nacos-client.nacos.svc.cluster.local:8848"
+  SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR: "nacos-client.nacos.svc.cluster.local:8848"
+  # Nacos 命名空间(msrcs bootstrap.yml 写的就是 tsp)
+  SPRING_CLOUD_NACOS_DISCOVERY_NAMESPACE: "tsp"
+  SPRING_CLOUD_NACOS_CONFIG_NAMESPACE: "tsp"
+  # 暂不注册到 Nacos(后续要打开只需把这一行删掉)
+  SPRING_CLOUD_NACOS_DISCOVERY_REGISTER_ENABLED: "false"
+  # config 仍开启(从 Nacos 拉 msrcs.properties 等配置)
+  SPRING_CLOUD_NACOS_CONFIG_ENABLED: "true"
+
+# -- 来自 K8s Secret 的数据库凭据(env valueFrom.secretKeyRef 形式注入)
+# 这些 Secret 由 templates/00-externalsecret.yaml 创建
+dbCredentials:
+  # MySQL
+  - { name: MYSQL_HOST,         secretName: app-db-mysql,   secretKey: MYSQL_HOST }
+  - { name: MYSQL_PORT,         secretName: app-db-mysql,   secretKey: MYSQL_PORT }
+  - { name: MYSQL_DBNAME,       secretName: app-db-mysql,   secretKey: MYSQL_DBNAME }
+  - { name: MYSQL_USERNAME,     secretName: app-db-mysql,   secretKey: MYSQL_USERNAME }
+  - { name: MYSQL_PASSWORD,     secretName: app-db-mysql,   secretKey: MYSQL_PASSWORD }
+  # MongoDB (DocumentDB, TLS 强制)
+  - { name: MONGODB_HOST,       secretName: app-db-mongodb, secretKey: MONGODB_HOST }
+  - { name: MONGODB_READER_HOST, secretName: app-db-mongodb, secretKey: MONGODB_READER_HOST }
+  - { name: MONGODB_PORT,       secretName: app-db-mongodb, secretKey: MONGODB_PORT }
+  - { name: MONGODB_USERNAME,   secretName: app-db-mongodb, secretKey: MONGODB_USERNAME }
+  - { name: MONGODB_PASSWORD,   secretName: app-db-mongodb, secretKey: MONGODB_PASSWORD }
+  # Redis (Valkey, TLS + AUTH)
+  - { name: REDIS_HOST,         secretName: app-db-redis,   secretKey: REDIS_HOST }
+  - { name: REDIS_READER_HOST,  secretName: app-db-redis,   secretKey: REDIS_READER_HOST }
+  - { name: REDIS_PORT,         secretName: app-db-redis,   secretKey: REDIS_PORT }
+  - { name: REDIS_AUTH_TOKEN,   secretName: app-db-redis,   secretKey: REDIS_AUTH_TOKEN }
+
 serviceAccount:
   # -- 是否创建 ServiceAccount
   create: true
