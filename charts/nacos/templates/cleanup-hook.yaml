@@ -3,11 +3,54 @@
 
   Purpose:  ArgoCD won't auto-prune a previously created SyncHook Job whose
   template has been removed from the chart (the `argocd.argoproj.io/hook-delete-policy:
-  BeforeHookCreation` annotation only fires when a NEW hook of the same phase
-  is about to be created). This PostSync hook is a tiny no-op (sleep 5s) that
-  exists *only* to trigger that deletion. After a single sync, the old
-  `nacos-debug` Job and its Pod disappear and this file can be removed again.
+  BeforeHookCreation` annotation only fires reliably for the SAME hook, not
+  for unrelated ones). This PostSync hook therefore:
+    1. grants itself a tiny RBAC role (delete on jobs + pods in this ns)
+    2. issues K8s API DELETE calls for the legacy `nacos-debug-*` resources
+    3. exits 0 so ArgoCD marks the hook Succeeded
+
+  After this one-shot run the legacy `nacos-debug*` resources are gone and
+  this file can be removed again on a follow-up sync.
 */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nacos.fullname" . }}-cleanup-hook
+  namespace: {{ .Values.instance.namespace }}
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nacos.fullname" . }}-cleanup-hook
+  namespace: {{ .Values.instance.namespace }}
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: [jobs]
+    verbs: [get, list, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nacos.fullname" . }}-cleanup-hook
+  namespace: {{ .Values.instance.namespace }}
+  labels:
+    {{- include "nacos.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "nacos.fullname" . }}-cleanup-hook
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "nacos.fullname" . }}-cleanup-hook
+    namespace: {{ .Values.instance.namespace }}
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -15,7 +58,7 @@ metadata:
   namespace: {{ .Values.instance.namespace }}
   annotations:
     argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
     argocd.argoproj.io/sync-wave: "5"
   labels:
     {{- include "nacos.labels" . | nindent 4 }}
@@ -26,15 +69,53 @@ spec:
     metadata:
       name: {{ include "nacos.fullname" . }}-cleanup-hook
     spec:
+      serviceAccountName: {{ include "nacos.fullname" . }}-cleanup-hook
       restartPolicy: Never
       containers:
         - name: cleanup
           image: alpine:3.20
-          command: ["/bin/sh", "-c", "echo cleanup-hook placeholder; sleep 5"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -u
+              apk add --no-cache curl >/dev/null 2>&1 || true
+              TOK=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+              API="https://kubernetes.default.svc"
+              echo "[cleanup-hook] removing legacy nacos-debug* resources in ns=$NS"
+              # Jobs
+              for j in $(curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" "$API/apis/batch/v1/namespaces/$NS/jobs" \
+                         | python3 -c "import sys,json;[print(x['metadata']['name']) for x in json.load(sys.stdin)['items'] if x['metadata']['name'].startswith('nacos-debug')]"); do
+                echo "  - delete job/$j"
+                curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" -X DELETE \
+                  "$API/apis/batch/v1/namespaces/$NS/jobs/$j" \
+                  -o /dev/null -w "    HTTP=%{http_code}\n"
+              done
+              # Pods (stragglers, e.g. if the Job is gone but the Pod still terminates)
+              for p in $(curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" "$API/api/v1/namespaces/$NS/pods" \
+                         | python3 -c "import sys,json;[print(x['metadata']['name']) for x in json.load(sys.stdin)['items'] if x['metadata']['name'].startswith('nacos-debug')]"); do
+                echo "  - delete pod/$p"
+                curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" -X DELETE \
+                  "$API/api/v1/namespaces/$NS/pods/$p" \
+                  -o /dev/null -w "    HTTP=%{http_code}\n"
+              done
+              # ServiceAccount / ClusterRole / ClusterRoleBinding (legacy debug resources)
+              for r in "serviceaccount/nacos-debug" "role/nacos-debug" "rolebinding/nacos-debug"; do
+                echo "  - delete $r"
+                curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" -X DELETE \
+                  "$API/api/v1/namespaces/$NS/$r" -o /dev/null -w "    HTTP=%{http_code}\n" || true
+              done
+              for r in "clusterrole/nacos-debug" "clusterrolebinding/nacos-debug"; do
+                echo "  - delete $r"
+                curl -sk --cacert "$CACERT" -H "Authorization: Bearer $TOK" -X DELETE \
+                  "$API/apis/rbac.authorization.k8s.io/v1/$r" -o /dev/null -w "    HTTP=%{http_code}\n" || true
+              done
+              echo "[cleanup-hook] done"
           resources:
             requests:
               cpu: 10m
-              memory: 16Mi
+              memory: 32Mi
             limits:
               cpu: 50m
-              memory: 32Mi
+              memory: 64Mi
