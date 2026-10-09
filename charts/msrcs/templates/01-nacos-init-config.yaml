@@ -1,0 +1,124 @@
+# 一次性 Job: 创建 Nacos namespace 'tsp' 并发布 msrcs.properties
+# 仅当 Nacos admin 为默认 nacos/nacos 时可直接使用; 否则改 env NACOS_USER/NACOS_PASSWORD
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nacos-init-msrcs-config
+  namespace: msrcs
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+data:
+  # DataId: msrcs.properties, Group: msrcs, Namespace: tsp
+  # 占位符 ${VAR:default} 由 Spring 在运行时从 K8s env 解析
+  msrcs.properties: |
+    # ===== MySQL =====
+    spring.datasource.url=jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT:3306}/${MYSQL_DBNAME:msrcs}?useUnicode=true&characterEncoding=UTF-8&useSSL=false&autoReconnect=true
+    spring.datasource.username=${MYSQL_USERNAME}
+    spring.datasource.password=${MYSQL_PASSWORD}
+    spring.datasource.driver-class-name=com.mysql.jdbc.Driver
+    spring.datasource.hikari.maximum-pool-size=20
+    spring.datasource.hikari.minimum-idle=2
+    spring.datasource.hikari.connection-timeout=30000
+
+    # ===== MongoDB (DocumentDB, TLS 强制) =====
+    spring.data.mongodb.uri=mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${MONGODB_HOST}:${MONGODB_PORT:27017}/msrcs?tls=true
+
+    # ===== Redis (Valkey, TLS + AUTH) =====
+    spring.redis.host=${REDIS_HOST}
+    spring.redis.port=${REDIS_PORT:6379}
+    spring.redis.password=${REDIS_AUTH_TOKEN}
+    spring.redis.timeout=20000
+
+  init.sh: |
+    #!/bin/sh
+    set -eu
+    NACOS="http://${NACOS_ADDR}"
+    echo ">>> 1) 登录 Nacos (user=${NACOS_USER})"
+    LOGIN_RESP=$(curl -sf -X POST "${NACOS}/nacos/v1/auth/users/login" \
+      -H 'Content-Type: application/x-www-form-urlencoded' \
+      -d "username=${NACOS_USER}&password=${NACOS_PASSWORD}")
+    TOKEN=$(printf '%s' "$LOGIN_RESP" | sed -E 's/.*"accessToken":"([^"]+)".*/\1/')
+    if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+      echo "FATAL: 登录失败, 响应: $LOGIN_RESP"
+      exit 1
+    fi
+    echo "    OK"
+
+    echo ">>> 2) 查找/创建 namespace '${NAMESPACE_NAME}'"
+    NS_LIST=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
+      "${NACOS}/nacos/v1/console/namespaces")
+    NS_ID=$(printf '%s' "$NS_LIST" | tr ',' '\n' | grep "\"namespaceName\":\"${NAMESPACE_NAME}\"" \
+      | sed -E 's/.*"namespaceId":"([^"]+)".*/\1/' | head -1 || true)
+    if [ -z "$NS_ID" ]; then
+      echo "    namespace 不存在,创建"
+      CREATE_RESP=$(curl -sf -X POST -H "Authorization: Bearer ${TOKEN}" \
+        -H 'Content-Type: application/x-www-form-urlencoded' \
+        -d "customNamespaceId=&namespaceName=${NAMESPACE_NAME}&namespaceDesc=TSP" \
+        "${NACOS}/nacos/v1/console/namespaces")
+      echo "    create resp: $CREATE_RESP"
+      NS_ID=$(printf '%s' "$CREATE_RESP" | sed -E 's/.*"data":"([^"]+)".*/\1/' | head -1)
+      echo "    created nsId=$NS_ID"
+    else
+      echo "    found nsId=$NS_ID"
+    fi
+    if [ -z "$NS_ID" ]; then
+      echo "FATAL: namespace id 为空, abort"
+      exit 1
+    fi
+
+    echo ">>> 3) 发布 ${DATA_ID} (group=${GROUP}, nsId=${NS_ID})"
+    PUB_RESP=$(curl -sf -X POST -H "Authorization: Bearer ${TOKEN}" \
+      "${NACOS}/nacos/v1/cs/configs?dataId=${DATA_ID}&group=${GROUP}&namespaceId=${NS_ID}&type=properties" \
+      --data-urlencode "content@/config/msrcs.properties")
+    echo "    resp: $PUB_RESP"
+    if ! printf '%s' "$PUB_RESP" | grep -q '"data":true'; then
+      echo "FATAL: publish 失败"
+      exit 1
+    fi
+    echo ">>> OK: published ${DATA_ID} to ${NAMESPACE_NAME}/${GROUP}"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nacos-init-msrcs
+  namespace: msrcs
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: curlimages/curl:8.5.0
+          env:
+            - name: NACOS_ADDR
+              value: "nacos-client.nacos.svc.cluster.local:8848"
+            - name: NACOS_USER
+              value: "nacos"
+            - name: NACOS_PASSWORD
+              value: "nacos"
+            - name: NAMESPACE_NAME
+              value: "tsp"
+            - name: DATA_ID
+              value: "msrcs.properties"
+            - name: GROUP
+              value: "msrcs"
+          command: ["/bin/sh", "/config/init.sh"]
+          volumeMounts:
+            - name: cfg
+              mountPath: /config
+      volumes:
+        - name: cfg
+          configMap:
+            name: nacos-init-msrcs-config
+            items:
+              - key: init.sh
+                path: init.sh
+              - key: msrcs.properties
+                path: msrcs.properties
