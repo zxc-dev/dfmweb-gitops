@@ -32,31 +32,38 @@ serviceAccount:
   # -- 自定义名称(留空则使用默认生成)
   name: ""
 
-# -- Service 配置: 通过 AWS Load Balancer Controller 创建 NLB
+# -- Service 配置: 入口由 ALB Ingress 接管, Service 用 ClusterIP
 service:
-  # -- LoadBalancer(NLB) / ClusterIP
-  type: LoadBalancer
+  # -- ClusterIP(ALB Ingress target-type: ip 直连 Pod, 避免 NLB+ALB 双入口)
+  type: ClusterIP
   # -- Service 暴露端口
   port: 80
   # -- 容器端口名(对应 deployment.yaml 中 ports.name)
   targetPortName: http
-  # -- NLB 注解(AWS Load Balancer Controller external 模式)
-  annotations:
-    # -- 负载均衡类型(NLB)
-    service.beta.kubernetes.io/aws-load-balancer-type: nlb
-    # -- IP 模式直连 Pod
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
-    # -- 公网入口 / 内网改为 internal
-    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+  # -- ClusterIP 无需 LB 注解
+  annotations: {}
 
-# -- Ingress 已弃用(改用 Service type=LoadBalancer 的 NLB)
+# -- Ingress: 通过 AWS Load Balancer Controller 创建 ALB
+# 当前走内部组 dfm-internal(内网 HTTP 80); 后续拿到 ACM 证书 ARN 再切 dfm-external(公网 HTTPS)
+# 参考样例: ingress-samples/ingress-internal.yaml
 ingress:
   # -- 是否创建 Ingress
-  enabled: false
+  enabled: true
   className: alb
-  annotations: {}
+  annotations:
+    # -- ALB 组名(必填): 同组 Ingress 合并共用一个内部 ALB; 不填会与其它默认组冲突拿不到 ADDRESS
+    alb.ingress.kubernetes.io/group.name: dfm-internal
+    # -- internal(私有子网) / internet-facing(公有子网)
+    alb.ingress.kubernetes.io/scheme: internal
+    # -- IP 模式直连 Pod
+    alb.ingress.kubernetes.io/target-type: ip
+    # -- 监听器: 内部组只开 HTTP 80
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    # -- 健康检查路径(与 Deployment 探针一致, 均为 /)
+    alb.ingress.kubernetes.io/healthcheck-path: /
   hosts:
-    - host: tspweb.dfm-dev.stellantis.cloud
+    # -- 内部域名: 后缀需与 Route53 私有 zone 一致(dev: dfm-tsp-dev.internal)
+    - host: dfmweb.dfm-tsp-dev.internal
       paths:
         - path: /
           pathType: Prefix
